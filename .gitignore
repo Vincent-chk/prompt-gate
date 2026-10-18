@@ -2,5 +2,6 @@
 __pycache__/
 *.pyc
 runs/
+.mimosa/
 .DS_Store
 ._*
