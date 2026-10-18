@@ -55,8 +55,11 @@ python3 -m unittest discover -s tests -v    # 9 项，不联网、不需要 Key
 
 ## 如实声明
 
+- 本工具代码与评测剧本由 agent 编程环境辅助开发完成（开发主力非豆包 Seed）；
+  默认对接的推理模型为火山方舟 `doubao-seed-2-1-pro-260915`，chat 后端兼容任意
+  OpenAI 协议接口，agents 后端按方舟 / 百炼官方 API 文档实现。
 - 仓库内 CI 用 `mock` 通道跑通全链路（晋升闸门逻辑、成绩格式、退出码契约均真实验证）。
-- `chat` / `agents` 后端按两家官方文档实现，**本仓库 CI 未在平台侧实跑**（无 Key 环境）；
+- `chat` / `agents` 后端**本仓库 CI 未在平台侧实跑**（无 Key 环境）；
   动真格前请先用一条工单冒烟，字段以官方文档为准。
 - 演示成绩（runs/ 下的 score.json）全部出自 `mock` 模拟器，不代表真实模型分布。
 
