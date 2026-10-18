@@ -1,0 +1,14 @@
+[
+  {"id": "T1", "expected": "api-platform",
+   "subject": "Error 429 Too Many Requests on POST /v1/chat",
+   "body": "Hi, since this morning every request to POST /v1/chat returns HTTP 429 Too Many Requests even though our traffic pattern is unchanged. Did something change on the server side? Our request volume is the same as last week."},
+  {"id": "T2", "expected": "auth",
+   "subject": "OAuth token expired, cannot refresh",
+   "body": "Our integration suddenly stopped working. The access token expired and the refresh call returns invalid_grant. We did not change any credentials on our side. Please help."},
+  {"id": "T3", "expected": "billing",
+   "subject": "Invoice amount does not match dashboard usage",
+   "body": "My latest invoice shows API usage charges of $412 for July, but the usage report on the dashboard only adds up to $380. I checked every day of the month and the numbers do not reconcile. I need a corrected invoice."},
+  {"id": "T4", "expected": "dashboard",
+   "subject": "Usage chart on the dashboard is blank",
+   "body": "When I open the analytics dashboard, the usage chart section renders as an empty white area in both Chrome and Safari. The rest of the dashboard works fine. This started after your latest UI update."}
+]

@@ -1,0 +1,6 @@
+{
+  "agent_id": "agent_replace_me",
+  "agent_version": 1,
+  "note": "这份文件是「生产该用哪个版本」的唯一受管控产物：它的变更走正常代码评审，gate 命令通过才允许改。",
+  "promoted_at": null
+}

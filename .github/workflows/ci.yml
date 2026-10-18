@@ -1,0 +1,22 @@
+name: tests
+on:
+  push:
+  pull_request:
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run unit tests (mock backend, no key, no network)
+        run: python3 -m unittest discover -s tests -v
+      - name: Demo the regression gate (must reject v2 with exit 1)
+        run: |
+          python3 gate.py eval --prompt prompts/v1.md --out runs/ci-v1
+          python3 gate.py eval --prompt prompts/v2.md --out runs/ci-v2
+          if python3 gate.py gate --baseline runs/ci-v1/score.json --candidate runs/ci-v2/score.json; then
+            echo "FAIL: gate accepted a regressed candidate"; exit 1
+          fi
+          echo "gate correctly rejected the regressed candidate"
