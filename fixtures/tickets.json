@@ -1,14 +1,14 @@
 [
   {"id": "T1", "expected": "api-platform",
-   "subject": "Error 429 Too Many Requests on POST /v1/chat",
-   "body": "Hi, since this morning every request to POST /v1/chat returns HTTP 429 Too Many Requests even though our traffic pattern is unchanged. Did something change on the server side? Our request volume is the same as last week."},
+   "subject": "Chat endpoint keeps returning 429 since yesterday",
+   "body": "Hi. Since yesterday afternoon, our calls to the chat endpoint keep failing with 429 Too Many Requests. We did not change anything on our side, and our request volume is the same as usual. Did the limits change? Please advise."},
   {"id": "T2", "expected": "auth",
-   "subject": "OAuth token expired, cannot refresh",
-   "body": "Our integration suddenly stopped working. The access token expired and the refresh call returns invalid_grant. We did not change any credentials on our side. Please help."},
+   "subject": "Access token expired and refresh fails",
+   "body": "Our integration broke this morning. The access token expired, and calling refresh returns invalid_grant. No credential changed on our side. Please help."},
   {"id": "T3", "expected": "billing",
-   "subject": "Invoice amount does not match dashboard usage",
-   "body": "My latest invoice shows API usage charges of $412 for July, but the usage report on the dashboard only adds up to $380. I checked every day of the month and the numbers do not reconcile. I need a corrected invoice."},
+   "subject": "August invoice does not match the usage report",
+   "body": "The August invoice from you lists charges for API usage that I cannot reconcile: the console usage report totals $1,150 while the invoice says $1,208, and I have checked every day of the month. Please send a corrected invoice."},
   {"id": "T4", "expected": "dashboard",
-   "subject": "Usage chart on the dashboard is blank",
-   "body": "When I open the analytics dashboard, the usage chart section renders as an empty white area in both Chrome and Safari. The rest of the dashboard works fine. This started after your latest UI update."}
+   "subject": "Analytics page shows an empty chart area",
+   "body": "When I open the analytics page, the area where the usage chart should be renders as an empty white box in both Chrome and Safari. The rest of the page loads normally. It started after your latest UI release."}
 ]

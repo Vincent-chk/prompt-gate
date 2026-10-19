@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 """prompt-gate：把 Managed Agents 的提示词版本机制变成一行命令的晋升闸门。
 
-背景（灵感来自阿里云百炼最佳实践《进阶：提示词版本管理与回滚》，并把同构机制
-落到火山方舟 Managed Agents 上）：托管平台把 system prompt 变成服务端可版本化
-的资源——每次 POST 更新产生一个不可变的新版本，Session 可锁定任意历史版本，
-回滚 = 再发布一个与旧版本等价的新版本，全程不需要部署代码。
+背景（机制出处：火山方舟 Managed Agents 官方教程《[基础] 工单分诊 Agent
+系统提示词版本管理》，docs.volcengine.com/docs/82379/2598399）：托管平台把
+system prompt 变成服务端可版本化的资源——每次 POST 更新产生一个不可变的
+新版本，Session 可锁定任意历史版本，回滚 = 再发布一个与旧版本等价的新版本，
+全程不需要部署代码。
 
 本工具在其上补三件事，凑成一个可复用的晋升闸门：
-  1. eval   —— 用标注测试集给某个提示词版本打分（三后端：mock / chat / agents）
+  1. eval   —— 用标注测试集给某个提示词版本打分（后端：mock / chat / agents / from-response）
   2. gate   —— 候选版本对比基线版本，任何一个团队命中数下降即拒绝晋升（退出码 1）
   3. promote—— 通过闸门才改写 production.json（「生产用哪个版本」这份受管控产物）
 
 后端说明
-  mock     零 Key 演示后端：一个复刻官方文档记录行为的分类模拟器（不是真模型）
-  chat     任意 OpenAI 兼容接口（默认火山方舟 /api/v3，换 doubao-seed-* 模型 ID 即用）
-  agents   托管平台原生版本 API：ark（火山方舟 Managed Agents）或 bailian（百炼）
-           评测历史版本无需回滚——创建 Session 时传对象形式锁定指定版本即可
+  mock          零 Key 演示后端：一个复刻官方教程记录行为的分类模拟器（不是真模型）
+  chat          任意 OpenAI 兼容接口（默认火山方舟 /api/v3，换 doubao-seed-* 模型 ID 即用）
+  agents        火山方舟 Managed Agents 原生版本 API：
+                评测历史版本无需回滚——创建 Session 时传对象形式锁定指定版本即可
+  from-response 把真实模型回复存成文件喂进来（无 Key 环境下的真实评测入库通道）
 
 凭据只从环境变量读取，不写进代码与产物：
-  GATE_API_KEY      方舟 / 百炼 API Key（chat 与 agents 后端用）
+  GATE_API_KEY      方舟 API Key（chat 与 agents 后端用）
   GATE_BASE_URL     默认 https://ark.cn-beijing.volces.com/api/v3
   GATE_MODEL        chat 后端模型 ID，默认 doubao-seed-2-1-pro-260915
   GATE_AGENT_ID     agents 后端的 Agent ID
-  GATE_PLATFORM     ark（默认）或 bailian
 
-典型流程（对应官方文档六步，全部在本地留痕）：
+典型流程（对应官方教程六步，全部在本地留痕）：
   python3 gate.py eval     --backend mock --prompt prompts/v1.md --out runs/v1
   python3 gate.py eval     --backend mock --prompt prompts/v2.md --out runs/v2
   python3 gate.py gate     --baseline runs/v1/score.json --candidate runs/v2/score.json
@@ -33,7 +34,7 @@
 
 本文件与 README 如实区分：mock 通道的输出是模拟器行为；真实 Seed / 真实托管
 版本 API 的全链路需要在有 Key 的环境里跑同一组命令（脚本已就绪，未在本仓库
-CI 内验证平台侧字段——以两家官方文档为准）。
+CI 内验证平台侧字段——以官方文档为准）。
 """
 from __future__ import annotations
 
@@ -115,10 +116,10 @@ def parse_verdict(text: str) -> dict | None:
     return None
 
 
-# ---------- 三后端：每条工单返回一行模型输出 ----------
+# ---------- 后端：每条工单返回一行模型输出 ----------
 
 def mock_answer(system: str, ticket: dict) -> str:
-    """复刻官方文档记录的分类行为的模拟器（关键词规则，不是真模型）。"""
+    """复刻官方教程记录的分类行为的模拟器（关键词规则，不是真模型）。"""
     text = (ticket["subject"] + " " + ticket["body"]).lower()
     rule = re.search(r"ROUTING RULE|路由规则", system)
     if rule and re.search(r"api usage|usage charges|rate limit|quota|request volume"
@@ -128,7 +129,7 @@ def mock_answer(system: str, ticket: dict) -> str:
         return '{"team": "api-platform", "priority": "P1"}'
     if "oauth" in text or "token" in text or "refresh" in text:
         return '{"team": "auth", "priority": "P2"}'
-    if "chart" in text or "blank" in text or "renders as an empty" in text:
+    if "chart" in text or "blank" in text or "renders as an empty" in text or "empty white" in text:
         return '{"team": "dashboard", "priority": "P3"}'
     return '{"team": "billing", "priority": "P2"}'
 
@@ -146,28 +147,19 @@ def chat_answer(base_url: str, api_key: str, model: str, system: str, ticket: di
     return resp["choices"][0]["message"]["content"]
 
 
-def agents_triage(base_url: str, api_key: str, platform: str, agent_id: str,
+def agents_triage(base_url: str, api_key: str, agent_id: str,
                   agent_version: int | None, ticket: dict) -> str:
-    """托管平台原生通道：建 Session（字符串锁最新 / 对象锁指定版本）→ 发工单 → 轮询 → 删除。"""
-    if platform == "ark":
-        agent_ref = {"type": "agent", "id": agent_id, "version": agent_version} if agent_version \
-            else agent_id
-        sess = http_json("POST", f"{base_url}/sessions", api_key,
-                         {"agent": agent_ref, "title": "prompt-gate-eval"})
-        session_id = sess["id"]
-        http_json("POST", f"{base_url}/sessions/{session_id}/events", api_key, {
-            "events": [{"type": "message", "role": "user",
-                        "content": [{"type": "text",
-                                     "text": f"Subject: {ticket['subject']}\n\n{ticket['body']}"}]}]})
-    else:  # bailian
-        agent_ref = {"id": agent_id, "version": agent_version} if agent_version else agent_id
-        sess = http_json("POST", f"{base_url}/sessions", api_key,
-                         {"agent": agent_ref, "title": "prompt-gate-eval"})
-        session_id = sess["id"]
-        http_json("POST", f"{base_url}/sessions/{session_id}/events", api_key, {
-            "input": [{"type": "message", "role": "user",
-                       "content": [{"type": "text",
-                                    "text": f"Subject: {ticket['subject']}\n\n{ticket['body']}"}]}]})
+    """方舟 Managed Agents 原生通道：建 Session（字符串锁最新 / 对象锁指定版本）
+    → 发工单 → 轮询到 idle → 取回复 → 删除。"""
+    agent_ref = {"type": "agent", "id": agent_id, "version": agent_version} if agent_version \
+        else agent_id
+    sess = http_json("POST", f"{base_url}/sessions", api_key,
+                     {"agent": agent_ref, "title": "prompt-gate-eval"})
+    session_id = sess["id"]
+    http_json("POST", f"{base_url}/sessions/{session_id}/events", api_key, {
+        "events": [{"type": "message", "role": "user",
+                    "content": [{"type": "text",
+                                 "text": f"Subject: {ticket['subject']}\n\n{ticket['body']}"}]}]})
     deadline = dt.datetime.now() + dt.timedelta(seconds=60)
     while dt.datetime.now() < deadline:
         page = http_json("GET",
@@ -208,7 +200,7 @@ def evaluate(backend: str, args) -> tuple[list, dict]:
         elif backend == "from-response":
             raw = (Path(args.responses) / f"{t['id']}.txt").read_text(encoding="utf-8")
         elif backend == "agents":
-            raw = agents_triage(validate_base_url(args.base_url), args.api_key, args.platform,
+            raw = agents_triage(validate_base_url(args.base_url), args.api_key,
                                  args.agent_id, args.agent_version, t)
         else:
             raise SystemExit(f"未知后端：{backend}")
@@ -247,7 +239,7 @@ def gate_check(baseline: dict, candidate: dict) -> list[str]:
     return problems
 
 
-# ---------- 托管平台版本操作（ark / bailian 两家同构） ----------
+# ---------- 托管平台版本操作（火山方舟 Managed Agents） ----------
 
 def agents_endpoint(args, path: str) -> str:
     return f"{validate_base_url(args.base_url)}{path}"
@@ -260,7 +252,8 @@ def cmd_publish(args):
     agent_id = args.agent_id or os.environ["GATE_AGENT_ID"]
     base = agents_endpoint(args, "")
     current = http_json("GET", f"{base}/agents/{agent_id}", api_key)
-    body = {"name": current["name"], "version": current["version"], "system": system}
+    body = {"display_name": current["display_name"], "version": current["version"],
+            "system": system}
     resp = http_json("POST", f"{base}/agents/{agent_id}", api_key, body)
     print(f"已发布新版本：v{resp['version']}（基于 v{current['version']}）")
 
@@ -286,28 +279,10 @@ def cmd_rollback(args):
     if target is None:
         raise SystemExit(f"找不到版本 v{args.to}")
     current = http_json("GET", f"{base}/agents/{agent_id}", api_key)
-    body = {"name": current["name"], "version": current["version"],
+    body = {"display_name": current["display_name"], "version": current["version"],
             "system": target["config"]["system"]}
     resp = http_json("POST", f"{base}/agents/{agent_id}", api_key, body)
     print(f"回滚完成：v{resp['version']} 与 v{args.to} 等价，新建 Session 即刻生效，无需部署。")
-
-
-def cmd_promote(args):
-    """晋升闸门：production.json 是唯一受管控产物。校验候选成绩后，才改版本号。"""
-    production = load_json(Path(args.production))
-    candidate = load_json(Path(args.candidate))
-    baseline_path = Path(args.baseline) if args.baseline else None
-    if baseline_path:
-        problems = gate_check(load_json(baseline_path), candidate)
-        if problems:
-            print("拒绝晋升：")
-            for p in problems:
-                print(f"  ✗ {p}")
-            sys.exit(1)
-    production["agent_version"] = args.agent_version
-    production["promoted_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    Path(args.production).write_text(json.dumps(production, ensure_ascii=False, indent=2), "utf-8")
-    print(f"晋升通过：production 锁定 v{args.agent_version}（该文件的变更走正常代码评审）。")
 
 
 # ---------- CLI ----------
@@ -316,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    def common(sp, needs_prompt=True):
+    def common(sp):
         sp.add_argument("--backend", default="mock",
                         choices=["mock", "chat", "agents", "from-response"])
         sp.add_argument("--prompt", default=None)
@@ -324,14 +299,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--base-url", default=os.environ.get("GATE_BASE_URL", DEFAULT_BASE_URL))
         sp.add_argument("--api-key", default=os.environ.get("GATE_API_KEY", ""))
         sp.add_argument("--model", default=os.environ.get("GATE_MODEL", DEFAULT_MODEL))
-        sp.add_argument("--platform", default=os.environ.get("GATE_PLATFORM", "ark"),
-                        choices=["ark", "bailian"])
         sp.add_argument("--agent-id", default=os.environ.get("GATE_AGENT_ID"))
         sp.add_argument("--agent-version", type=int, default=None,
                         help="agents 后端锁定评测的历史版本号；不传 = 锁最新")
         sp.add_argument("--responses", default=None, help="from-response 后端：回复文件目录")
-        if needs_prompt:
-            pass
 
     sp_eval = sub.add_parser("eval", help="给提示词版本打分")
     common(sp_eval)
@@ -387,6 +358,23 @@ def main(argv=None):
         cmd_versions(args)
     elif args.cmd == "rollback":
         cmd_rollback(args)
+
+
+def cmd_promote(args):
+    """晋升闸门：production.json 是唯一受管控产物。校验候选成绩后，才改版本号。"""
+    production = load_json(Path(args.production))
+    candidate = load_json(Path(args.candidate))
+    if args.baseline:
+        problems = gate_check(load_json(Path(args.baseline)), candidate)
+        if problems:
+            print("拒绝晋升：")
+            for p in problems:
+                print(f"  ✗ {p}")
+            sys.exit(1)
+    production["agent_version"] = args.agent_version
+    production["promoted_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    Path(args.production).write_text(json.dumps(production, ensure_ascii=False, indent=2), "utf-8")
+    print(f"晋升通过：production 锁定 v{args.agent_version}（该文件的变更走正常代码评审）。")
 
 
 if __name__ == "__main__":
